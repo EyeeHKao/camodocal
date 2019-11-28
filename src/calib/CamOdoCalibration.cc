@@ -38,22 +38,22 @@ public:
         Eigen::Matrix<T,3,1> r2 = m_rvec2.cast<T>();
         Eigen::Matrix<T,3,1> t2 = m_tvec2.cast<T>();
 
-        Eigen::Quaternion<T> q1 = AngleAxisToQuaternion<T>(r1);
+        Eigen::Quaternion<T> q1 = AngleAxisToQuaternion<T>(r1); ///轴角旋转量转为四元数
         Eigen::Quaternion<T> q2 = AngleAxisToQuaternion<T>(r2);
 
-        Eigen::Matrix<T,3,3> R1 = AngleAxisToRotationMatrix<T>(r1);
+        Eigen::Matrix<T,3,3> R1 = AngleAxisToRotationMatrix<T>(r1); ///轴角旋转量转为旋转矩阵
 
         T q_coeffs[4] = {q.w(), q.x(), q.y(), q.z()};
-        Eigen::Matrix<T,3,3> R = QuaternionToRotation<T>(q_coeffs);
-
+        Eigen::Matrix<T,3,3> R = QuaternionToRotation<T>(q_coeffs); ///四元数旋转量转为旋转矩阵
+        //平移误差
         Eigen::Matrix<T,3,1> t_err = (R1 - Eigen::Matrix<T,3,3>::Identity()) * t
                                      - (scale[0] * R * t2) + t1;
-
+        //旋转误差(四元数表示）
         Eigen::Quaternion<T> q_err = q.conjugate() * q1 * q * q2.conjugate();
-
+        //旋转误差(旋转矩阵表示）
         T q_err_coeffs[4] = {q_err.w(), q_err.x(), q_err.y(), q_err.z()};
-        Eigen::Matrix<T,3,3> R_err = QuaternionToRotation<T>(q_err_coeffs);
-
+        Eigen::Matrix<T,3,3> R_err = QuaternionToRotation<T>(q_err_coeffs); 
+        //旋转误差(rpy欧拉角表示）
         T roll, pitch, yaw;
         mat2RPY(R_err, roll, pitch, yaw);
 
@@ -82,12 +82,13 @@ bool
 CamOdoCalibration::addMotionSegment(const std::vector<Eigen::Matrix4d, Eigen::aligned_allocator<Eigen::Matrix4d> >& H_cam,
                                     const std::vector<Eigen::Matrix4d, Eigen::aligned_allocator<Eigen::Matrix4d> >& H_odo)
 {
+    //确保相对位姿测量数量相同
     if (H_odo.size() != H_cam.size())
     {
         return false;
     }
 
-    MotionSegment segment;
+    MotionSegment segment;  ///一段运动，包含多对相机相对位姿和里程计相对位姿
     for (size_t i = 0; i < H_odo.size(); ++i)
     {
         Eigen::Matrix3d R_odo = H_odo.at(i).block<3,3>(0,0);
@@ -109,7 +110,7 @@ CamOdoCalibration::addMotionSegment(const std::vector<Eigen::Matrix4d, Eigen::al
         segment.camMotions.push_back(camMotion);
     }
 
-    mSegments.push_back(segment);
+    mSegments.push_back(segment);   ///多段运动
 
     return true;
 }
@@ -159,7 +160,7 @@ CamOdoCalibration::setMotionCount(size_t count)
 bool
 CamOdoCalibration::motionsEnough(void) const
 {
-    return getCurrentMotionCount() >= getMotionCount();
+    return getCurrentMotionCount() >= getMotionCount(); ///当前采样运动数超过最小设定值
 }
 
 bool
@@ -178,7 +179,7 @@ CamOdoCalibration::calibrate(Eigen::Matrix4d& H_cam_odo)
         std::cerr << "# ERROR: No segments, calibration fails!!" << std::endl;
         return false;
     }
-
+    //填充每段运动
     for (size_t i = 0; i < mSegments.size(); ++i)
     {
         MotionSegment& segment = mSegments.at(i);
@@ -191,7 +192,7 @@ CamOdoCalibration::calibrate(Eigen::Matrix4d& H_cam_odo)
             tvecsCam.at(i).push_back(segment.camMotions.at(j).translation);
         }
     }
-
+    //估计外参数，
     return estimate(rvecsOdo, tvecsOdo, rvecsCam, tvecsCam, H_cam_odo, scales);
 }
 
@@ -314,17 +315,17 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
                             Eigen::Matrix4d& H_cam_odo,
                             std::vector<double>& scales) const
 {
-    // Estimate R_yx first
+    // Estimate R_yx first，首先计算旋转R_yz
     Eigen::Matrix3d R_yx;
     estimateRyx(rvecs1, tvecs1, rvecs2, tvecs2, R_yx);
 
-    int segmentCount = rvecs1.size();
+    int segmentCount = rvecs1.size();   ///表示m个相机相对测量数
     int motionCount = 0;
     for (int segmentId = 0; segmentId < segmentCount; ++segmentId)
     {
-        motionCount += rvecs1.at(segmentId).size();
+        motionCount += rvecs1.at(segmentId).size(); ///表示相对测量的总数：每段运动中相对测量数之和
     }
-
+    //构造矩阵Ｇ,
     Eigen::MatrixXd G = Eigen::MatrixXd::Zero(motionCount * 2, 2 + segmentCount * 2);
     Eigen::MatrixXd w = Eigen::MatrixXd::Zero(motionCount * 2, 1);
 
@@ -371,9 +372,9 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
 
     Eigen::MatrixXd m(2 + segmentCount * 2, 1);
     m = G.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(w);
-
+    //平移量ｔx, ty
     Eigen::Vector2d t(-m(0), -m(1));
-
+    //计算旋转alpha和尺度
     std::vector<double> alpha_hypos;
     for (int segmentId = 0; segmentId < segmentCount; ++segmentId)
     {
@@ -386,7 +387,7 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
 
     double errorMin = std::numeric_limits<double>::max();
     double alpha_best = 0.0;
-
+    //选择最佳alpha：误差最小的那个
     for (size_t i = 0; i < alpha_hypos.size(); ++i)
     {
         double error = 0.0;
@@ -429,10 +430,10 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
             alpha_best = alpha;
         }
     }
-
+    //到此已计算出alpha, q_yx, tx, ty了填充外参
     H_cam_odo.setIdentity();
     H_cam_odo.block<3,3>(0,0) = Eigen::AngleAxisd(alpha_best, Eigen::Vector3d::UnitZ()) * R_yx;
-    H_cam_odo.block<2,1>(0,3) = t;
+    H_cam_odo.block<2,1>(0,3) = t;  ///t_z 为０
 
     if (mVerbose)
     {
@@ -446,7 +447,7 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
         }
         std::cout << std::endl;
     }
-
+    //对估计出外参进行校正
     refineEstimate(H_cam_odo, scales, rvecs1, tvecs1, rvecs2, tvecs2);
 
     if (mVerbose)
@@ -475,28 +476,28 @@ CamOdoCalibration::estimateRyx(const std::vector<std::vector<Eigen::Vector3d, Ei
     size_t motionCount = 0;
     for (size_t i = 0; i < rvecs1.size(); ++i)
     {
-        motionCount += rvecs1.at(i).size();
+        motionCount += rvecs1.at(i).size(); ///相对位姿的总数量ｎ
     }
 
-    Eigen::MatrixXd M(motionCount * 4, 4);
+    Eigen::MatrixXd M(motionCount * 4, 4);  
     M.setZero();
-
+    ///构建４n*4的矩阵Ｍ    
     size_t mark = 0;
     for (size_t i = 0; i < rvecs1.size(); ++i)
     {
         for (size_t j = 0; j < rvecs1.at(i).size(); ++j)
         {
-            const Eigen::Vector3d& rvec1 = rvecs1.at(i).at(j);
+            const Eigen::Vector3d& rvec1 = rvecs1.at(i).at(j);  ///里程计相对旋转
             //const Eigen::Vector3d& tvec1 = tvecs1.at(i).at(j);
-            const Eigen::Vector3d& rvec2 = rvecs2.at(i).at(j);
+            const Eigen::Vector3d& rvec2 = rvecs2.at(i).at(j);  ///相机相对旋转
             //const Eigen::Vector3d& tvec2 = tvecs2.at(i).at(j);
 
-            // Remove zero rotation.
+            // Remove zero rotation.移除０旋转量
             if (rvec1.norm() == 0 || rvec2.norm() == 0)
             {
                 continue;
             }
-
+            //转为四元数    
             Eigen::Quaterniond q1;
             q1 = Eigen::AngleAxisd(rvec1.norm(), rvec1.normalized());
 
@@ -508,13 +509,13 @@ CamOdoCalibration::estimateRyx(const std::vector<std::vector<Eigen::Vector3d, Ei
             ++mark;
         }
     }
-
+    //svd分解
     Eigen::JacobiSVD<Eigen::MatrixXd> svd(M, Eigen::ComputeFullU | Eigen::ComputeFullV);
-
+    //取最小的两个奇异值对应的右奇异向量，Ｖ对应的后两列
     Eigen::Vector4d t1 = svd.matrixV().block<4,1>(0,2);
     Eigen::Vector4d t2 = svd.matrixV().block<4,1>(0,3);
 
-    // solve constraint for q_yz: xy = -zw
+    // solve constraint for q_yz: xy = -zw：带入约束条件确定参数s[0]和s[1]
     double s[2];
     if (!solveQuadraticEquation(t1(0) * t1(1) + t1(2) * t1(3),
                                 t1(0) * t2(1) + t1(1) * t2(0) + t1(2) * t2(3) + t1(3) * t2(2),
@@ -535,7 +536,7 @@ CamOdoCalibration::estimateRyx(const std::vector<std::vector<Eigen::Vector3d, Ei
         // solve constraint ||q_yx|| = 1
         double b = sqrt(1.0 / t);
         double a = s[i] * b;
-
+        
         Eigen::Quaterniond q_yx;
         q_yx.coeffs() = a * t1 + b * t2;
         R_yxs[i] = q_yx.toRotationMatrix();
@@ -564,7 +565,7 @@ CamOdoCalibration::refineEstimate(Eigen::Matrix4d& H_cam_odo, std::vector<double
     Eigen::Quaterniond q(H_cam_odo.block<3,3>(0,0));
     double q_coeffs[4] = {q.w(), q.x(), q.y(), q.z()};
     double t_coeffs[3] = {H_cam_odo(0,3), H_cam_odo(1,3), H_cam_odo(2,3)};
-
+    //构建ceses优化问题，进一步优化
     ceres::Problem problem;
 
     for (size_t i = 0; i < rvecs1.size(); ++i)
