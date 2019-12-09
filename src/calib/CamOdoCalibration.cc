@@ -88,7 +88,7 @@ CamOdoCalibration::addMotionSegment(const std::vector<Eigen::Matrix4d, Eigen::al
         return false;
     }
 
-    MotionSegment segment;  ///一段运动，包含多对相机相对位姿和里程计相对位姿
+    MotionSegment segment;  ///一段运动，包含多对相机相对位姿和里程计相对位姿，分成多段vo运动，每段对应一个视觉尺度scale,而避免只用一个scale
     for (size_t i = 0; i < H_odo.size(); ++i)
     {
         Eigen::Matrix3d R_odo = H_odo.at(i).block<3,3>(0,0);
@@ -166,7 +166,7 @@ CamOdoCalibration::motionsEnough(void) const
 bool
 CamOdoCalibration::calibrate(Eigen::Matrix4d& H_cam_odo)
 {
-    std::vector<double> scales;
+    std::vector<double> scales; ///每段vo运动的scale
 
     std::vector<std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > > rvecsOdo, tvecsOdo, rvecsCam, tvecsCam;
 
@@ -315,7 +315,7 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
                             Eigen::Matrix4d& H_cam_odo,
                             std::vector<double>& scales) const
 {
-    // Estimate R_yx first，首先计算旋转R_yz
+    // Estimate R_yx first，首先计算旋转R_yx
     Eigen::Matrix3d R_yx;
     estimateRyx(rvecs1, tvecs1, rvecs2, tvecs2, R_yx);
 
@@ -374,7 +374,7 @@ CamOdoCalibration::estimate(const std::vector<std::vector<Eigen::Vector3d, Eigen
     m = G.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(w);
     //平移量ｔx, ty
     Eigen::Vector2d t(-m(0), -m(1));
-    //计算旋转alpha和尺度
+    //计算每段vo的旋转alpha和尺度
     std::vector<double> alpha_hypos;
     for (int segmentId = 0; segmentId < segmentCount; ++segmentId)
     {
@@ -515,7 +515,7 @@ CamOdoCalibration::estimateRyx(const std::vector<std::vector<Eigen::Vector3d, Ei
     Eigen::Vector4d t1 = svd.matrixV().block<4,1>(0,2);
     Eigen::Vector4d t2 = svd.matrixV().block<4,1>(0,3);
 
-    // solve constraint for q_yz: xy = -zw：带入约束条件确定参数s[0]和s[1]
+    // solve constraint for q_yx: xy = -zw：s=a/b,q_yx=a * t1 + b* t2
     double s[2];
     if (!solveQuadraticEquation(t1(0) * t1(1) + t1(2) * t1(3),
                                 t1(0) * t2(1) + t1(1) * t2(0) + t1(2) * t2(3) + t1(3) * t2(2),
@@ -544,7 +544,7 @@ CamOdoCalibration::estimateRyx(const std::vector<std::vector<Eigen::Vector3d, Ei
         double r, p;
         mat2RPY(R_yxs[i], r, p, yaw[i]);
     }
-    if (fabs(yaw[0]) < fabs(yaw[1]))
+    if (fabs(yaw[0]) < fabs(yaw[1]))    ///旋转有Ｙ轴和Ｘ轴组成，所以Z轴的yaw角应尽可能小
     {
         R_yx = R_yxs[0];
     }
